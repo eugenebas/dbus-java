@@ -1,0 +1,6 @@
+jdk:
+    - openjdk11
+before_install:
+    - yes | sdkmanager "platforms;android-31" "build-tools;31.0.0"
+install:
+    - mvn install -DskipTests
