@@ -1,4 +1,4 @@
 jdk:
   - openjdk21
 install:
-  - mvn install -DskipTests -Dcheckstyle.skip -Dpmd.skip -Dspotbugs.skip -Denforcer.skip=true
+  - ./mvnw install -DskipTests -Denforcer.skip=true -Dcheckstyle.skip -Dpmd.skip
