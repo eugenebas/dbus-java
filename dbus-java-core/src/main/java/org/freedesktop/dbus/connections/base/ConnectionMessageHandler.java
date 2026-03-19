@@ -28,7 +28,7 @@ import java.util.Queue;
  * @author hypfvieh
  * @since 5.0.0 - 2023-10-23
  */
-public abstract sealed class ConnectionMessageHandler extends DBusBoundPropertyHandler permits AbstractConnection {
+public abstract class ConnectionMessageHandler extends DBusBoundPropertyHandler permits AbstractConnection {
 
     protected ConnectionMessageHandler(ConnectionConfig _conCfg, TransportConfig _transportConfig, ReceivingServiceConfig _rsCfg) throws DBusException {
         super(_conCfg, _transportConfig, _rsCfg);

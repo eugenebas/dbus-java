@@ -29,7 +29,7 @@ import java.util.Arrays;
  * @author hypfvieh
  * @since 5.0.0 - 2023-10-23
  */
-public abstract sealed class ConnectionMethodInvocation extends AbstractConnectionBase permits DBusBoundPropertyHandler {
+public abstract class ConnectionMethodInvocation extends AbstractConnectionBase permits DBusBoundPropertyHandler {
 
     protected ConnectionMethodInvocation(ConnectionConfig _conCfg, TransportConfig _transportConfig, ReceivingServiceConfig _rsCfg) throws DBusException {
         super(_conCfg, _transportConfig, _rsCfg);

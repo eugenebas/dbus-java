@@ -38,7 +38,7 @@ import java.util.stream.Collectors;
  * @author hypfvieh
  * @since 5.1.0 - 2024-03-18
  */
-public abstract sealed class DBusBoundPropertyHandler extends ConnectionMethodInvocation permits ConnectionMessageHandler {
+public abstract class DBusBoundPropertyHandler extends ConnectionMethodInvocation permits ConnectionMessageHandler {
 
     private static final Method PROP_GETALL_METHOD = PropRefRemoteHandler.getPropertiesMethod("GetAll", String.class);
 
