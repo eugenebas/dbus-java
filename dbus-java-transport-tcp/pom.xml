@@ -30,6 +30,13 @@
             <artifactId>dbus-java-core</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <dependency>
+          <groupId>com.google.android</groupId>
+          <artifactId>android</artifactId>
+          <version>4.1.1.4</version> <!-- Или используйте заглушку нужной версии -->
+          <scope>provided</scope>
+        </dependency>
+
     </dependencies>
     
 </project>
