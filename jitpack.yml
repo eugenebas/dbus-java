@@ -1,6 +1,6 @@
 jdk:
     - openjdk11
 before_install:
-    - yes | sdkmanager "platforms;android-31" "build-tools;31.0.0"
+    - sdk install android-sdk-platform-31
 install:
     - mvn install -DskipTests
