@@ -5,7 +5,7 @@ import org.freedesktop.dbus.connections.config.ReceivingServiceConfig;
 import org.freedesktop.dbus.connections.config.TransportConfig;
 import org.freedesktop.dbus.exceptions.DBusException;
 
-public class AndroidDBusBuilder extends BaseConnectionBuilder<AndroidDBusBuilder, DBusConnection> {
+public final class AndroidDBusBuilder extends BaseConnectionBuilder<AndroidDBusBuilder, DBusConnection> {
 
     private final String manualMachineId;
 
@@ -25,7 +25,6 @@ public class AndroidDBusBuilder extends BaseConnectionBuilder<AndroidDBusBuilder
         ReceivingServiceConfig rcvSvcCfg = buildThreadConfig();
         TransportConfig transportCfg = buildTransportConfig();
         ConnectionConfig connectionConfig = getConnectionConfig();
-
         DBusConnection c = new DBusConnection(
                 false,  // boolean _shared
                 manualMachineId,    // String _machineId
@@ -33,11 +32,7 @@ public class AndroidDBusBuilder extends BaseConnectionBuilder<AndroidDBusBuilder
                 transportCfg,       // TransportConfig _transportCfg
                 rcvSvcCfg                 // ReceivingServiceConfig _rsCfg
         );
-
         c.connectImpl();
-
         return c;
     }
-
-
 }

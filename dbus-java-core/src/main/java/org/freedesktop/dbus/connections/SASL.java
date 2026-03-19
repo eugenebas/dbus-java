@@ -62,7 +62,7 @@ public class SASL {
     static {
         try {
             COL.setDecomposition(2);
-        } catch (Exception setDecompositionException) { // Ignore the error, this is not critical
+        } catch (Exception _ex) { // Ignore the error, this is not critical
         }
         COL.setStrength(Collator.PRIMARY);
     }
