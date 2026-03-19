@@ -42,7 +42,7 @@ import java.util.concurrent.*;
  * @since 5.0.0 - 2023-10-23
  * @author hypfvieh
  */
-public abstract class AbstractConnectionBase implements Closeable permits ConnectionMethodInvocation {
+public abstract class AbstractConnectionBase implements Closeable {
 
     private static final Map<Thread, DBusCallInfo> INFOMAP = new ConcurrentHashMap<>();
 
