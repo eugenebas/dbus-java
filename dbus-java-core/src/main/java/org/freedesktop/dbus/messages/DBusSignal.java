@@ -309,8 +309,7 @@ public class DBusSignal extends Message {
                             return wrap(c);
                         }
                         return c;
-                    })
-                    .toList();
+                    }).collect(Collectors.toList());
             types = createTypes(constructor);
         }
 

@@ -2,7 +2,8 @@ package org.freedesktop.dbus.connections;
 
 import static org.freedesktop.dbus.connections.SASL.SaslCommand.*;
 
-import com.sun.security.auth.module.UnixSystem;
+//import com.sun.security.auth.module.UnixSystem;
+
 import org.freedesktop.dbus.config.DBusSysProps;
 import org.freedesktop.dbus.connections.config.SaslConfig;
 import org.freedesktop.dbus.connections.transports.AbstractTransport;
@@ -59,7 +60,10 @@ public class SASL {
 
     private static final Collator COL = Collator.getInstance();
     static {
-        COL.setDecomposition(Collator.FULL_DECOMPOSITION);
+        try {
+            COL.setDecomposition(2);
+        } catch(Exception e) { // Ignore the error, this is not critical
+        }
         COL.setStrength(Collator.PRIMARY);
     }
 
@@ -264,8 +268,8 @@ public class SASL {
                 break;
             }
         }
-
-        logger.trace("received: {}", sb);
+        android.util.Log.e("DBUS_SYSTEM", "received: " + sb);
+        logger.debug("received: {}", sb);
         try {
             return new Command(sb.toString());
         } catch (Exception _ex) {
@@ -285,70 +289,77 @@ public class SASL {
         sb.append('\r');
         sb.append('\n');
         logger.trace("sending: {}", sb);
+        logger.debug("sending: {}", sb);
+        String logString = sb.toString();
+        logString = logString.replace('\r', 'r');
+        logString = logString.replace('\n', 'n');
+        logString = logString.replace(' ', '_');
+        logString = logString.replace('\0', '0');
+        android.util.Log.e("DBUS_SYSTEM", "sending: `" + logString + "`");
         _sock.write(ByteBuffer.wrap(sb.toString().getBytes()));
     }
 
     SaslResult doChallenge(int _auth, SASL.Command _c) throws IOException {
         switch (_auth) {
-        case AUTH_SHA:
-            String[] reply = stupidlyDecode(_c.getData()).split(" ");
-            LoggingHelper.logIf(logger.isTraceEnabled(), () -> logger.trace("Auth data: {}", Arrays.toString(reply)));
+            case AUTH_SHA:
+                String[] reply = stupidlyDecode(_c.getData()).split(" ");
+                LoggingHelper.logIf(logger.isTraceEnabled(), () -> logger.trace("Auth data: {}", Arrays.toString(reply)));
 
-            if (3 != reply.length) {
-                logger.debug("Reply is not length 3");
+                if (3 != reply.length) {
+                    logger.debug("Reply is not length 3");
+                    return SaslResult.ERROR;
+                }
+
+                String context = reply[0];
+                String id = reply[1];
+                final String serverchallenge = reply[2];
+
+                MessageDigest md = null;
+                try {
+                    md = MessageDigest.getInstance("SHA");
+                } catch (NoSuchAlgorithmException _ex) {
+                    logger.debug("Could not find SHA algorithm", _ex);
+                    return SaslResult.ERROR;
+                }
+
+                byte[] buf = new byte[8];
+
+                // ensure we get a (more or less unique) positive long
+                long seed = Optional.of(System.nanoTime()).map(t -> t < 0 ? t * -1 : t).get();
+
+                Message.marshallintBig(seed, buf, 0, 8);
+                String clientchallenge = stupidlyEncode(md.digest(buf));
+                md.reset();
+
+                TimeMeasure tm = new TimeMeasure();
+                String lCookie = null;
+
+                while (lCookie == null && tm.getElapsed() < LOCK_TIMEOUT) {
+                    lCookie = findCookie(context, id);
+                }
+
+                if (lCookie == null) {
+                    logger.debug("Did not find a cookie in context {}  with ID {}", context, id);
+                    return SaslResult.ERROR;
+                }
+
+                String response = serverchallenge + ":" + clientchallenge + ":" + lCookie;
+                buf = md.digest(response.getBytes());
+
+                if (logger.isTraceEnabled()) {
+                    logger.trace("Response: {} hash: {}", response, Hexdump.format(buf));
+                }
+
+                response = stupidlyEncode(buf);
+                _c.setResponse(stupidlyEncode(clientchallenge + " " + response));
+                return SaslResult.OK;
+            case AUTH_ANON:
+                // Pong back DATA if server wants it for anonymous auth
+                _c.setResponse(_c.getData() == null ? "" : _c.getData());
+                return SaslResult.OK;
+            default:
+                logger.debug("Not DBUS_COOKIE_SHA1 authtype.");
                 return SaslResult.ERROR;
-            }
-
-            String context = reply[0];
-            String id = reply[1];
-            final String serverchallenge = reply[2];
-
-            MessageDigest md = null;
-            try {
-                md = MessageDigest.getInstance("SHA");
-            } catch (NoSuchAlgorithmException _ex) {
-                logger.debug("Could not find SHA algorithm", _ex);
-                return SaslResult.ERROR;
-            }
-
-            byte[] buf = new byte[8];
-
-            // ensure we get a (more or less unique) positive long
-            long seed = Optional.of(System.nanoTime()).map(t -> t < 0 ? t * -1 : t).get();
-
-            Message.marshallintBig(seed, buf, 0, 8);
-            String clientchallenge = stupidlyEncode(md.digest(buf));
-            md.reset();
-
-            TimeMeasure tm = new TimeMeasure();
-            String lCookie = null;
-
-            while (lCookie == null && tm.getElapsed() < LOCK_TIMEOUT) {
-                lCookie = findCookie(context, id);
-            }
-
-            if (lCookie == null) {
-                logger.debug("Did not find a cookie in context {}  with ID {}", context, id);
-                return SaslResult.ERROR;
-            }
-
-            String response = serverchallenge + ":" + clientchallenge + ":" + lCookie;
-            buf = md.digest(response.getBytes());
-
-            if (logger.isTraceEnabled()) {
-                logger.trace("Response: {} hash: {}", response, Hexdump.format(buf));
-            }
-
-            response = stupidlyEncode(buf);
-            _c.setResponse(stupidlyEncode(clientchallenge + " " + response));
-            return SaslResult.OK;
-        case AUTH_ANON:
-            // Pong back DATA if server wants it for anonymous auth
-            _c.setResponse(_c.getData() == null ? "" : _c.getData());
-            return SaslResult.OK;
-        default:
-            logger.debug("Not DBUS_COOKIE_SHA1 authtype.");
-            return SaslResult.ERROR;
         }
     }
 
@@ -363,36 +374,36 @@ public class SASL {
         switch (_auth) {
             case AUTH_NONE:
                 switch (_c.getMechs()) {
-                case AUTH_ANON:
-                    return SaslResult.OK;
-                case AUTH_EXTERNAL:
-                    if (0 == COL.compare(_uid, _c.getData()) && (null == _kernelUid || 0 == COL.compare(_uid, _kernelUid))) {
+                    case AUTH_ANON:
                         return SaslResult.OK;
-                    } else {
-                        return SaslResult.REJECT;
-                    }
-                case AUTH_SHA:
-                    String context = COOKIE_CONTEXT;
-                    long id = System.currentTimeMillis();
-                    byte[] buf = new byte[8];
-                    Message.marshallintBig(id, buf, 0, 8);
-                    challenge = stupidlyEncode(md.digest(buf));
+                    case AUTH_EXTERNAL:
+                        if (0 == COL.compare(_uid, _c.getData()) && (null == _kernelUid || 0 == COL.compare(_uid, _kernelUid))) {
+                            return SaslResult.OK;
+                        } else {
+                            return SaslResult.REJECT;
+                        }
+                    case AUTH_SHA:
+                        String context = COOKIE_CONTEXT;
+                        long id = System.currentTimeMillis();
+                        byte[] buf = new byte[8];
+                        Message.marshallintBig(id, buf, 0, 8);
+                        challenge = stupidlyEncode(md.digest(buf));
 
-                    RANDOM.nextBytes(buf);
-                    cookie = stupidlyEncode(md.digest(buf));
-                    try {
-                        addCookie(context, "" + id, id / 1000, cookie);
-                    } catch (IOException _ex) {
-                        logger.error("Error authenticating using cookie", _ex);
+                        RANDOM.nextBytes(buf);
+                        cookie = stupidlyEncode(md.digest(buf));
+                        try {
+                            addCookie(context, "" + id, id / 1000, cookie);
+                        } catch (IOException _ex) {
+                            logger.error("Error authenticating using cookie", _ex);
+                            return SaslResult.ERROR;
+                        }
+
+                        logger.debug("Sending challenge: {} {} {}", context, id, challenge);
+
+                        _c.setResponse(stupidlyEncode(context + ' ' + id + ' ' + challenge));
+                        return SaslResult.CONTINUE;
+                    default:
                         return SaslResult.ERROR;
-                    }
-
-                    logger.debug("Sending challenge: {} {} {}", context, id, challenge);
-
-                    _c.setResponse(stupidlyEncode(context + ' ' + id + ' ' + challenge));
-                    return SaslResult.CONTINUE;
-                default:
-                    return SaslResult.ERROR;
                 }
             case AUTH_SHA:
                 String[] response = stupidlyDecode(_c.getData()).split(" ");
@@ -412,32 +423,32 @@ public class SASL {
                 }
             default:
                 return SaslResult.ERROR;
-            }
+        }
     }
 
     public String[] convertAuthTypes(int _types) {
         return switch (_types) {
             case AUTH_EXTERNAL -> new String[] {
-                        AUTH_TYPE_EXTERNAL
-                };
+                    AUTH_TYPE_EXTERNAL
+            };
             case AUTH_SHA -> new String[] {
-                        AUTH_TYPE_DBUS_COOKIE_SHA1
-                };
+                    AUTH_TYPE_DBUS_COOKIE_SHA1
+            };
             case AUTH_ANON -> new String[] {
-                        AUTH_TYPE_ANONYMOUS
-                };
+                    AUTH_TYPE_ANONYMOUS
+            };
             case AUTH_SHA + AUTH_EXTERNAL -> new String[] {
-                        AUTH_TYPE_EXTERNAL, AUTH_TYPE_DBUS_COOKIE_SHA1
-                };
+                    AUTH_TYPE_EXTERNAL, AUTH_TYPE_DBUS_COOKIE_SHA1
+            };
             case AUTH_SHA + AUTH_ANON -> new String[] {
-                        AUTH_TYPE_ANONYMOUS, AUTH_TYPE_DBUS_COOKIE_SHA1
-                };
+                    AUTH_TYPE_ANONYMOUS, AUTH_TYPE_DBUS_COOKIE_SHA1
+            };
             case AUTH_EXTERNAL + AUTH_ANON -> new String[] {
-                        AUTH_TYPE_ANONYMOUS, AUTH_TYPE_EXTERNAL
-                };
+                    AUTH_TYPE_ANONYMOUS, AUTH_TYPE_EXTERNAL
+            };
             case AUTH_EXTERNAL + AUTH_ANON + AUTH_SHA -> new String[] {
-                        AUTH_TYPE_ANONYMOUS, AUTH_TYPE_EXTERNAL, AUTH_TYPE_DBUS_COOKIE_SHA1
-                };
+                    AUTH_TYPE_ANONYMOUS, AUTH_TYPE_EXTERNAL, AUTH_TYPE_DBUS_COOKIE_SHA1
+            };
             default -> new String[] {};
         };
     }
@@ -470,253 +481,253 @@ public class SASL {
             logger.trace("Mode: {} AUTH state: {}", saslConfig.getMode(), state);
 
             switch (saslConfig.getMode()) {
-            case CLIENT:
-                switch (state) {
-                case INITIAL_STATE:
-                    _sock.write(ByteBuffer.wrap(new byte[] {0}));
-                    send(_sock, AUTH);
-                    state = SaslAuthState.WAIT_DATA;
-                    break;
-                case WAIT_DATA:
-                    c = receive(_sock);
-                    switch (c.getCommand()) {
-                        case DATA:
-                            switch (doChallenge(current, c)) {
-                                case CONTINUE:
-                                    send(_sock, DATA, c.getResponse());
+                case CLIENT:
+                    switch (state) {
+                        case INITIAL_STATE:
+                            _sock.write(ByteBuffer.wrap(new byte[] {0}));
+                            send(_sock, AUTH);
+                            state = SaslAuthState.WAIT_DATA;
+                            break;
+                        case WAIT_DATA:
+                            c = receive(_sock);
+                            switch (c.getCommand()) {
+                                case DATA:
+                                    switch (doChallenge(current, c)) {
+                                        case CONTINUE:
+                                            send(_sock, DATA, c.getResponse());
+                                            break;
+                                        case OK:
+                                            send(_sock, DATA, c.getResponse());
+                                            state = SaslAuthState.WAIT_OK;
+                                            break;
+                                        case ERROR:
+                                        default:
+                                            send(_sock, ERROR, c.getResponse());
+                                            break;
+                                    }
                                     break;
-                                case OK:
-                                    send(_sock, DATA, c.getResponse());
-                                    state = SaslAuthState.WAIT_OK;
+                                case REJECTED:
+                                    failed |= current;
+                                    int available = c.getMechs() & (~failed);
+                                    int retVal = handleReject(available, luid, _sock);
+                                    if (retVal == -1) {
+                                        state = SaslAuthState.FAILED;
+                                    } else {
+                                        current = retVal;
+                                    }
                                     break;
                                 case ERROR:
+                                    // when asking for file descriptor support, ERROR means FD support is not supported
+                                    if (state == SaslAuthState.NEGOTIATE_UNIX_FD) {
+                                        state = SaslAuthState.FINISHED;
+                                        logger.trace("File descriptors NOT supported by server");
+                                        fileDescriptorSupported = false;
+                                        send(_sock, BEGIN);
+                                    } else {
+                                        send(_sock, CANCEL);
+                                        state = SaslAuthState.WAIT_REJECT;
+                                    }
+                                    break;
+                                case OK:
+                                    logger.trace("Authenticated");
+
+                                    if (saslConfig.isFileDescriptorSupport()) {
+                                        state = SaslAuthState.WAIT_DATA;
+                                        logger.trace("Asking for file descriptor support");
+                                        // if authentication was successful, ask remote end for file descriptor support
+                                        send(_sock, NEGOTIATE_UNIX_FD);
+                                    } else {
+                                        state = SaslAuthState.FINISHED;
+                                        send(_sock, BEGIN);
+                                    }
+                                    break;
+                                case AGREE_UNIX_FD:
+                                    if (saslConfig.isFileDescriptorSupport()) {
+                                        state = SaslAuthState.FINISHED;
+                                        logger.trace("File descriptors supported by server");
+                                        fileDescriptorSupported = true;
+                                        send(_sock, BEGIN);
+                                    }
+                                    break;
                                 default:
-                                    send(_sock, ERROR, c.getResponse());
+                                    send(_sock, ERROR, INVALID_CMD_ERR);
                                     break;
                             }
-                        break;
-                        case REJECTED:
-                            failed |= current;
-                            int available = c.getMechs() & (~failed);
-                            int retVal = handleReject(available, luid, _sock);
-                            if (retVal == -1) {
+                            break;
+                        case WAIT_OK:
+                            c = receive(_sock);
+                            switch (c.getCommand()) {
+                                case OK:
+                                    send(_sock, BEGIN);
+                                    state = SaslAuthState.FINISHED;
+                                    break;
+                                case ERROR, DATA:
+                                    send(_sock, CANCEL);
+                                    state = SaslAuthState.WAIT_REJECT;
+                                    break;
+                                case REJECTED:
+                                    failed |= current;
+                                    int available = c.getMechs() & (~failed);
+                                    state = SaslAuthState.WAIT_DATA;
+                                    if (0 != (available & AUTH_EXTERNAL)) {
+                                        send(_sock, AUTH, AUTH_TYPE_EXTERNAL, luid);
+                                        current = AUTH_EXTERNAL;
+                                    } else if (0 != (available & AUTH_SHA)) {
+                                        send(_sock, AUTH, AUTH_TYPE_DBUS_COOKIE_SHA1, luid);
+                                        current = AUTH_SHA;
+                                    } else if (0 != (available & AUTH_ANON)) {
+                                        send(_sock, AUTH, AUTH_TYPE_ANONYMOUS);
+                                        current = AUTH_ANON;
+                                    } else {
+                                        state = SaslAuthState.FAILED;
+                                    }
+                                    break;
+                                default:
+                                    send(_sock, ERROR, INVALID_CMD_ERR);
+                                    break;
+                            }
+                            break;
+                        case WAIT_REJECT:
+                            c = receive(_sock);
+                            if (c.getCommand() == REJECTED) {
+                                failed |= current;
+                                int available = c.getMechs() & (~failed);
+                                int retVal = handleReject(available, luid, _sock);
+                                if (retVal == -1) {
+                                    state = SaslAuthState.FAILED;
+                                } else {
+                                    current = retVal;
+                                }
+                            } else {
                                 state = SaslAuthState.FAILED;
-                            } else {
-                                current = retVal;
-                            }
-                            break;
-                        case ERROR:
-                            // when asking for file descriptor support, ERROR means FD support is not supported
-                            if (state == SaslAuthState.NEGOTIATE_UNIX_FD) {
-                                state = SaslAuthState.FINISHED;
-                                logger.trace("File descriptors NOT supported by server");
-                                fileDescriptorSupported = false;
-                                send(_sock, BEGIN);
-                            } else {
-                                send(_sock, CANCEL);
-                                state = SaslAuthState.WAIT_REJECT;
-                            }
-                            break;
-                        case OK:
-                            logger.trace("Authenticated");
-
-                            if (saslConfig.isFileDescriptorSupport()) {
-                                state = SaslAuthState.WAIT_DATA;
-                                logger.trace("Asking for file descriptor support");
-                                // if authentication was successful, ask remote end for file descriptor support
-                                send(_sock, NEGOTIATE_UNIX_FD);
-                            } else {
-                                state = SaslAuthState.FINISHED;
-                                send(_sock, BEGIN);
-                            }
-                            break;
-                        case AGREE_UNIX_FD:
-                            if (saslConfig.isFileDescriptorSupport()) {
-                                state = SaslAuthState.FINISHED;
-                                logger.trace("File descriptors supported by server");
-                                fileDescriptorSupported = true;
-                                send(_sock, BEGIN);
                             }
                             break;
                         default:
-                            send(_sock, ERROR, INVALID_CMD_ERR);
-                            break;
-                        }
-                    break;
-                case WAIT_OK:
-                    c = receive(_sock);
-                    switch (c.getCommand()) {
-                    case OK:
-                        send(_sock, BEGIN);
-                        state = SaslAuthState.FINISHED;
-                        break;
-                    case ERROR, DATA:
-                        send(_sock, CANCEL);
-                        state = SaslAuthState.WAIT_REJECT;
-                        break;
-                    case REJECTED:
-                        failed |= current;
-                        int available = c.getMechs() & (~failed);
-                        state = SaslAuthState.WAIT_DATA;
-                        if (0 != (available & AUTH_EXTERNAL)) {
-                            send(_sock, AUTH, AUTH_TYPE_EXTERNAL, luid);
-                            current = AUTH_EXTERNAL;
-                        } else if (0 != (available & AUTH_SHA)) {
-                            send(_sock, AUTH, AUTH_TYPE_DBUS_COOKIE_SHA1, luid);
-                            current = AUTH_SHA;
-                        } else if (0 != (available & AUTH_ANON)) {
-                            send(_sock, AUTH, AUTH_TYPE_ANONYMOUS);
-                            current = AUTH_ANON;
-                        } else {
                             state = SaslAuthState.FAILED;
-                        }
-                        break;
-                    default:
-                        send(_sock, ERROR, INVALID_CMD_ERR);
-                        break;
                     }
                     break;
-                case WAIT_REJECT:
-                    c = receive(_sock);
-                    if (c.getCommand() == REJECTED) {
-                            failed |= current;
-                            int available = c.getMechs() & (~failed);
-                            int retVal = handleReject(available, luid, _sock);
-                            if (retVal == -1) {
-                                state = SaslAuthState.FAILED;
+                case SERVER:
+                    switch (state) {
+                        case INITIAL_STATE:
+                            ByteBuffer buf = ByteBuffer.allocate(1);
+                            if (_sock instanceof NetworkChannel) {
+                                _sock.read(buf); // 0
+                                state = SaslAuthState.WAIT_AUTH;
                             } else {
-                                current = retVal;
+                                try {
+                                    int kuid = -1;
+                                    if (_transport instanceof AbstractUnixTransport aut) {
+                                        kuid = aut.getUid(_sock);
+                                    }
+                                    if (kuid >= 0) {
+                                        kernelUid = stupidlyEncode("" + kuid);
+                                    }
+                                    state = SaslAuthState.WAIT_AUTH;
+
+                                } catch (SocketException _ex) {
+                                    state = SaslAuthState.FAILED;
+                                }
                             }
-                        } else {
+                            break;
+                        case WAIT_AUTH:
+                            c = receive(_sock);
+                            switch (c.getCommand()) {
+                                case AUTH:
+                                    switch (doResponse(current, luid, kernelUid, c)) {
+                                        case CONTINUE:
+                                            send(_sock, DATA, c.getResponse());
+                                            current = c.getMechs();
+                                            state = SaslAuthState.WAIT_DATA;
+                                            break;
+                                        case OK:
+                                            send(_sock, OK, saslConfig.getGuid());
+                                            state = SaslAuthState.WAIT_BEGIN;
+                                            current = 0;
+                                            break;
+                                        case REJECT:
+                                        default:
+                                            send(_sock, REJECTED, convertAuthTypes(saslConfig.getAuthMode()));
+                                            current = 0;
+                                            break;
+                                    }
+                                    break;
+                                case ERROR:
+                                    send(_sock, REJECTED, convertAuthTypes(saslConfig.getAuthMode()));
+                                    break;
+                                case BEGIN:
+                                    state = SaslAuthState.FAILED;
+                                    break;
+                                default:
+                                    send(_sock, ERROR, INVALID_CMD_ERR);
+                                    break;
+                            }
+                            break;
+                        case WAIT_DATA:
+                            c = receive(_sock);
+                            switch (c.getCommand()) {
+                                case DATA:
+                                    switch (doResponse(current, luid, kernelUid, c)) {
+                                        case CONTINUE:
+                                            send(_sock, DATA, c.getResponse());
+                                            state = SaslAuthState.WAIT_DATA;
+                                            break;
+                                        case OK:
+                                            send(_sock, OK, saslConfig.getGuid());
+                                            state = SaslAuthState.WAIT_BEGIN;
+                                            current = 0;
+                                            break;
+                                        case REJECT:
+                                        default:
+                                            send(_sock, REJECTED, convertAuthTypes(saslConfig.getAuthMode()));
+                                            current = 0;
+                                            break;
+                                    }
+                                    break;
+                                case ERROR, CANCEL:
+                                    send(_sock, REJECTED, convertAuthTypes(saslConfig.getAuthMode()));
+                                    state = SaslAuthState.WAIT_AUTH;
+                                    break;
+                                case BEGIN:
+                                    state = SaslAuthState.FAILED;
+                                    break;
+                                default:
+                                    send(_sock, ERROR, INVALID_CMD_ERR);
+                                    break;
+                            }
+                            break;
+                        case WAIT_BEGIN:
+                            c = receive(_sock);
+                            switch (c.getCommand()) {
+                                case ERROR, CANCEL:
+                                    send(_sock, REJECTED, convertAuthTypes(saslConfig.getAuthMode()));
+                                    state = SaslAuthState.WAIT_AUTH;
+                                    break;
+                                case BEGIN:
+                                    state = SaslAuthState.FINISHED;
+                                    break;
+                                case NEGOTIATE_UNIX_FD:
+                                    logger.debug("File descriptor negotiation requested");
+                                    if (!saslConfig.isFileDescriptorSupport()) {
+                                        send(_sock, ERROR);
+                                    } else {
+                                        send(_sock, AGREE_UNIX_FD);
+                                    }
+
+                                    break;
+                                default:
+                                    send(_sock, ERROR, INVALID_CMD_ERR);
+                                    break;
+                            }
+                            break;
+                        default:
                             state = SaslAuthState.FAILED;
                     }
                     break;
                 default:
-                    state = SaslAuthState.FAILED;
-                }
-                break;
-            case SERVER:
-                switch (state) {
-                    case INITIAL_STATE:
-                        ByteBuffer buf = ByteBuffer.allocate(1);
-                        if (_sock instanceof NetworkChannel) {
-                            _sock.read(buf); // 0
-                            state = SaslAuthState.WAIT_AUTH;
-                        } else {
-                            try {
-                                int kuid = -1;
-                                if (_transport instanceof AbstractUnixTransport aut) {
-                                    kuid = aut.getUid(_sock);
-                                }
-                                if (kuid >= 0) {
-                                    kernelUid = stupidlyEncode("" + kuid);
-                                }
-                                state = SaslAuthState.WAIT_AUTH;
-
-                            } catch (SocketException _ex) {
-                                state = SaslAuthState.FAILED;
-                            }
-                        }
-                    break;
-                    case WAIT_AUTH:
-                        c = receive(_sock);
-                        switch (c.getCommand()) {
-                            case AUTH:
-                                switch (doResponse(current, luid, kernelUid, c)) {
-                                    case CONTINUE:
-                                        send(_sock, DATA, c.getResponse());
-                                        current = c.getMechs();
-                                        state = SaslAuthState.WAIT_DATA;
-                                        break;
-                                    case OK:
-                                        send(_sock, OK, saslConfig.getGuid());
-                                        state = SaslAuthState.WAIT_BEGIN;
-                                        current = 0;
-                                        break;
-                                    case REJECT:
-                                    default:
-                                        send(_sock, REJECTED, convertAuthTypes(saslConfig.getAuthMode()));
-                                        current = 0;
-                                        break;
-                                }
-                                break;
-                            case ERROR:
-                                send(_sock, REJECTED, convertAuthTypes(saslConfig.getAuthMode()));
-                                break;
-                            case BEGIN:
-                                state = SaslAuthState.FAILED;
-                                break;
-                            default:
-                                send(_sock, ERROR, INVALID_CMD_ERR);
-                                break;
-                            }
-                    break;
-                    case WAIT_DATA:
-                        c = receive(_sock);
-                    switch (c.getCommand()) {
-                    case DATA:
-                        switch (doResponse(current, luid, kernelUid, c)) {
-                            case CONTINUE:
-                                send(_sock, DATA, c.getResponse());
-                                state = SaslAuthState.WAIT_DATA;
-                                break;
-                            case OK:
-                                send(_sock, OK, saslConfig.getGuid());
-                                state = SaslAuthState.WAIT_BEGIN;
-                                current = 0;
-                                break;
-                            case REJECT:
-                            default:
-                                send(_sock, REJECTED, convertAuthTypes(saslConfig.getAuthMode()));
-                                current = 0;
-                                break;
-                            }
-                        break;
-                        case ERROR, CANCEL:
-                            send(_sock, REJECTED, convertAuthTypes(saslConfig.getAuthMode()));
-                            state = SaslAuthState.WAIT_AUTH;
-                        break;
-                        case BEGIN:
-                            state = SaslAuthState.FAILED;
-                        break;
-                        default:
-                            send(_sock, ERROR, INVALID_CMD_ERR);
-                        break;
-                    }
-                    break;
-                    case WAIT_BEGIN:
-                        c = receive(_sock);
-                        switch (c.getCommand()) {
-                            case ERROR, CANCEL:
-                                send(_sock, REJECTED, convertAuthTypes(saslConfig.getAuthMode()));
-                                state = SaslAuthState.WAIT_AUTH;
-                            break;
-                            case BEGIN:
-                                    state = SaslAuthState.FINISHED;
-                            break;
-                            case NEGOTIATE_UNIX_FD:
-                                logger.debug("File descriptor negotiation requested");
-                                if (!saslConfig.isFileDescriptorSupport()) {
-                                    send(_sock, ERROR);
-                                } else {
-                                    send(_sock, AGREE_UNIX_FD);
-                                }
-
-                            break;
-                            default:
-                                send(_sock, ERROR, INVALID_CMD_ERR);
-                            break;
-                        }
-                    break;
-                    default:
-                        state = SaslAuthState.FAILED;
-                    }
-                break;
-            default:
-                return false;
+                    return false;
             }
         }
-
+        android.util.Log.d("DBUS", "Sasl state: " + state);
         return state == SaslAuthState.FINISHED;
     }
 
@@ -755,7 +766,8 @@ public class SASL {
      */
     private long getUserId() {
         if (!Util.isWindows()) {
-            return new UnixSystem().getUid();
+            return android.os.Process.myUid();
+            //return new UnixSystem().getUid();
         }
 
         return 0;
@@ -855,6 +867,7 @@ public class SASL {
             } else {
                 throw new IOException("Invalid Command " + ss[0]);
             }
+            logger.debug("Created command: {}", this);
             logger.trace("Created command: {}", this);
         }
 
