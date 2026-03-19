@@ -1,6 +1,6 @@
 jdk:
     - openjdk11
 before_install:
-    - sdk install android-sdk-platform-31
+    - JAVA_HOME=$JAVA_HOME_8 sdkmanager "platforms;android-31" "build-tools;31.0.0"
 install:
     - mvn install -DskipTests
