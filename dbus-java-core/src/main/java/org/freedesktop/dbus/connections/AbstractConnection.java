@@ -28,7 +28,7 @@ import java.util.regex.Pattern;
 /**
  * Handles a connection to DBus.
  */
-public abstract non-sealed class AbstractConnection extends ConnectionMessageHandler {
+public abstract class AbstractConnection extends ConnectionMessageHandler {
 
     public static final boolean      FLOAT_SUPPORT          = null != System.getenv("DBUS_JAVA_FLOATS");
     public static final Pattern      DOLLAR_PATTERN         = Pattern.compile("[$]");
